@@ -38,7 +38,6 @@ class Zf1Instrumentation
         self::_hook($instrumentation, 'Zend_Controller_Action', 'init', 'ZF1.controler_init');
         self::_hook($instrumentation, 'Zend_Controller_Action', 'preDispatch', 'ZF1.controler_preDispatch');
         self::_hook($instrumentation, 'Zend_Controller_Action', 'postDispatch', 'ZF1.controler_postDispatch');
-        self::_hook($instrumentation, 'Zend_Db_Adapter_Pdo_Abstract', 'query', 'ZF1.db_query');
 
         /**
          * Create a span for every db query. This can get noisy, so could be turned off via config?
@@ -47,10 +46,36 @@ class Zf1Instrumentation
             class: 'Zend_Db_Adapter_Pdo_Abstract',
             function: 'prepare',
             pre: static function ($object, ?array $params, ?string $class, string $function, ?string $filename, ?int $lineno) use ($instrumentation) {
+                $query = $params[0] ?? 'undefined';
+                $query = (string)$query;
                 $span = self::builder($instrumentation, 'ZF1.db_prepare', $function, $class, $filename, $lineno)
                     ->setSpanKind(SpanKind::KIND_CLIENT)
-                    ->setAttribute(TraceAttributes::DB_QUERY_TEXT, $params[0] ?? 'undefined')
+                    ->setAttribute(TraceAttributes::DB_QUERY_TEXT, $query)
                     ->startSpan();
+                Context::storage()->attach($span->storeInContext(Context::getCurrent()));
+            },
+            post: static function ($object, ?array $params, mixed $return, ?Throwable $exception) {
+                self::end($exception);
+            }
+        );
+
+        hook(
+            class: 'Zend_Db_Adapter_Pdo_Abstract',
+            function: 'query',
+            pre: static function ($object, ?array $params, ?string $class, string $function, ?string $filename, ?int $lineno) use ($instrumentation) {
+                $query = $params[0] ?? null;
+                if (is_string($query)) {
+                    $query = (string)$query;
+                    $span = self::builder($instrumentation, 'ZF1.query', $function, $class, $filename, $lineno)
+                        ->setSpanKind(SpanKind::KIND_CLIENT)
+                        ->setAttribute(TraceAttributes::DB_QUERY_TEXT, $query)
+                        ->startSpan();
+                }
+                else {
+                    $span = self::builder($instrumentation, 'ZF1.query', $function, $class, $filename, $lineno)
+                        ->setSpanKind(SpanKind::KIND_CLIENT)
+                        ->startSpan();
+                }
                 Context::storage()->attach($span->storeInContext(Context::getCurrent()));
             },
             post: static function ($object, ?array $params, mixed $return, ?Throwable $exception) {
